@@ -53,7 +53,12 @@ async (query) => {
         // Check if add-to-cart data exists (indicates availability)
         const atcEl = el.querySelector('[data-action="fresh-add-to-cart"]');
 
-        results.push({ asin, title, price, canAddToCart: !!atcEl, description, size });
+        // Thumbnail
+        let image = '';
+        const imgEl = el.querySelector('img.s-image, .s-image img, [data-component-type="s-product-image"] img');
+        if (imgEl) image = imgEl.getAttribute('src') || imgEl.getAttribute('data-src') || '';
+
+        results.push({ asin, title, price, canAddToCart: !!atcEl, description, size, image });
     }
     return results;
 }

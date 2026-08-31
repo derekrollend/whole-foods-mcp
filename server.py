@@ -198,8 +198,8 @@ async def search_whole_foods(query: str) -> str:
         query: Search terms — keep short and simple for best results
 
     Returns:
-        JSON array of results with asin, title, price, and whether
-        the item can be directly added to cart.
+        JSON array of results with asin, title, price, size, a thumbnail
+        image URL, and whether the item can be directly added to cart.
     """
     page = await _new_wf_page()
     try:
@@ -218,6 +218,7 @@ async def search_whole_foods(query: str) -> str:
             "price": r.get("price", ""),
             "description": r.get("description", ""),
             "size": r.get("size", ""),
+            "image": r.get("image", ""),
             "can_add_to_cart": r["canAddToCart"],
             "url": f"https://www.amazon.com/dp/{asin}?almBrandId={WF_BRAND_ID}&fpw=alm&s=wholefoods",
         }

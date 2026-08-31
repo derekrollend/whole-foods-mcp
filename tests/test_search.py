@@ -80,6 +80,7 @@ class TestSearchResultStructure:
             assert "title" in r
             assert "price" in r
             assert "url" in r
+            assert "image" in r
             assert len(r["asin"]) >= 5
             assert r["url"].startswith("https://")
 
