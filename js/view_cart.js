@@ -5,9 +5,19 @@
         if (!asin || asin.length < 5) continue;
 
         let title = '';
-        const titleEl = el.querySelector('.sc-product-title, .a-truncate-cut, a[href*="/dp/"]');
-        if (titleEl) title = titleEl.textContent.trim();
+        const titleEl = el.querySelector(
+            '.a-truncate-full, .sc-product-title, .a-truncate-cut, a[href*="/dp/"]'
+        );
+        if (titleEl) title = titleEl.textContent.replace(/\s+/g, ' ').trim();
         if (!title) continue;
+        // A `.a-truncate-cut` + hidden `.a-truncate-full` sibling makes
+        // textContent repeat the title ("Foo Bar 24 OZFoo Bar…") — cut at the
+        // point the opening chunk repeats.
+        if (title.length > 24) {
+            const probe = title.slice(0, 15);
+            const repeat = title.indexOf(probe, 8);
+            if (repeat > 0) title = title.slice(0, repeat).trim();
+        }
 
         // Extract quantity: try multiple approaches
         let qty = '1';
