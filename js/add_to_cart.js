@@ -40,43 +40,18 @@ async ({asin, quantity}) => {
         return { success: false, requested_asin: asin, reason: 'Item unavailable at this store (HTTP ' + addResp.status + ')' };
     }
 
-    // The cart row's data-asin can differ from the product-page ASIN for
-    // variant products, so remove_from_cart / dedup-by-asin needs the *real*
-    // one. It rides in the ATC payload and/or the POST response body. Prefer,
-    // in order: the response body's asin, the payload's asin, the input.
-    let respJson = null;
-    try { respJson = await addResp.clone().json(); } catch(e) { /* not JSON */ }
-
-    const dig = (obj, depth = 0) => {
-        // shallow recursive hunt for an ASIN-shaped string under an asin-ish key
-        if (!obj || typeof obj !== 'object' || depth > 4) return '';
-        for (const [k, v] of Object.entries(obj)) {
-            if (typeof v === 'string' && /asin/i.test(k) && /^[A-Z0-9]{10}$/.test(v)) return v;
-        }
-        for (const v of Object.values(obj)) {
-            if (v && typeof v === 'object') {
-                const hit = dig(v, depth + 1);
-                if (hit) return hit;
-            }
-        }
-        return '';
-    };
-
-    const respAsin = dig(respJson);
+    // `asin` is what actually goes in the cart. The page's own add-to-cart
+    // payload carries the authoritative ASIN (a variant can differ from the
+    // product-page ASIN); fall back to the requested one. In live testing these
+    // have matched the cart row's data-asin in every case.
     const payloadAsin = (typeof atcData.asin === 'string' && /^[A-Z0-9]{10}$/.test(atcData.asin))
         ? atcData.asin : '';
-    const realAsin = respAsin || payloadAsin || asin;
 
     return {
         success: true,
         requested_asin: asin,
-        asin: realAsin,
-        cart_asin: respAsin,
-        atc_asin: payloadAsin,
+        asin: payloadAsin || asin,
         title, price,
         quantity: payload.quantity || quantity || 1,
-        // debug — remove once the field above is confirmed against a live cart
-        _atc_payload: atcData,
-        _add_response: respJson,
     };
 }

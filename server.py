@@ -293,23 +293,16 @@ async def add_to_cart(asin: str, quantity: int = 1) -> str:
 def _added_payload(result: dict, asin: str, quantity: int) -> dict:
     """Shape a successful add_to_cart.js result for the MCP response.
 
-    `asin` is the ASIN that actually landed in the cart (may differ from the
-    requested one for variant products); `requested_asin` is what was asked for.
-    `_debug` carries the raw ATC payload + POST response during bring-up so we
-    can confirm which field maps to the cart row's data-asin.
+    `asin` is the ASIN that landed in the cart (from the page's add-to-cart
+    payload; can differ from the requested one for a variant). `requested_asin`
+    is what was asked for.
     """
     return {
         "added": result.get("title", asin),
         "asin": result.get("asin") or asin,
         "requested_asin": result.get("requested_asin", asin),
-        "cart_asin": result.get("cart_asin", ""),
-        "atc_asin": result.get("atc_asin", ""),
         "price": result.get("price", ""),
         "quantity": result.get("quantity", quantity),
-        "_debug": {
-            "atc_payload": result.get("_atc_payload"),
-            "add_response": result.get("_add_response"),
-        },
     }
 
 

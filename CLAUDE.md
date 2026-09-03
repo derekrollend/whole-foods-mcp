@@ -62,10 +62,10 @@ Each tool has a clear, single responsibility:
 - `add_many` / `remove_many` — batch cart mutation on a single page. Concurrent
   `add_to_cart` calls race the one Amazon cart and spuriously 400; a sequential
   batch does not. Programmatic callers should prefer these.
-- `add_to_cart` / `add_many` return `asin` = the ASIN that actually landed in
-  the cart (variant products differ from the requested ASIN), plus
-  `requested_asin`. `_debug` carries the raw ATC payload + POST response during
-  bring-up.
+- `add_to_cart` / `add_many` return `asin` = the ASIN that landed in the cart
+  (taken from the page's own `data-fresh-add-to-cart` payload; a variant can
+  differ from the requested ASIN), plus `requested_asin`. In live testing these
+  have matched the cart row's `data-asin` in every case.
 - `ping` — liveness without a page load, for callers polling connection status.
 - `_is_logged_in()` falls back to the `at-main` auth cookie when the DOM is
   inconclusive instead of assuming success.
