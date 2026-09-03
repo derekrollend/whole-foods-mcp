@@ -1,5 +1,14 @@
 # Whole Foods MCP Server
 
+> **Fork.** This is `derekrollend/whole-foods-mcp`, a fork of
+> [`benjiebob/whole-foods-mcp`](https://github.com/benjiebob/whole-foods-mcp)
+> maintained for [Recipe Relay](https://github.com/derekrollend/recipe-relay).
+> It adds batch cart tools (`add_many` / `remove_many`), a fast `ping` health
+> check, a real cart-ASIN in `add_to_cart`'s response, conservative login
+> detection, and a single-instance lock on `.browser_state`. `upstream` tracks
+> the original. See `docs/whole-foods-mcp-wishlist.md` in the Recipe Relay repo
+> for the rationale.
+
 An [MCP](https://modelcontextprotocol.io) server that automates grocery ordering from Amazon Whole Foods Market. Uses [Playwright](https://playwright.dev/python/) for browser automation and exposes tools for searching products, managing your cart, and adding items.
 
 Works with [Claude Code](https://claude.ai/code) and [Claude Desktop](https://claude.ai/download) (via MCPB).
@@ -78,10 +87,13 @@ Then double-click `whole-foods-mcp.mcpb` to install in Claude Desktop.
 | `save_session` | Persist session cookies to disk |
 | `search_whole_foods` | Search products — returns ASIN, title, price, size |
 | `get_product_details` | Deep dive into a product — full description, ingredients, image screenshot |
-| `add_to_cart` | Add a product by ASIN (fetches product page for fresh token) |
+| `add_to_cart` | Add a product by ASIN (fetches product page for fresh token); response `asin` is the real cart row |
+| `add_many` | Add several products in one pass — sequential on one page, no cart race |
 | `view_cart` | View current cart contents |
 | `remove_from_cart` | Remove an item by ASIN |
+| `remove_many` | Remove several items by ASIN |
 | `clear_cart` | Clear all cart items |
+| `ping` | Fast liveness check — `{ok, logged_in}` with no navigation |
 
 ## How It Works
 
@@ -95,4 +107,5 @@ Then double-click `whole-foods-mcp.mcpb` to install in Claude Desktop.
 - **Search is read-only** — `search_whole_foods` never touches the cart
 - **Add to cart is independent of search** — `add_to_cart` only needs an ASIN, it fetches its own token from the product page
 - **Product details include a screenshot** — `get_product_details` returns structured text AND a screenshot so Claude can see the product image
-- **No bulk tools** — Claude handles parallelism natively by calling `add_to_cart` multiple times via agents
+- **Batch tools for programmatic callers** — `add_many` / `remove_many` apply a whole list on one page, sequentially, so they never race the shared Amazon cart. Interactive use can still fan out `add_to_cart` via agents (cap ~6).
+- **Single instance per login** — the server takes an exclusive lock on `.browser_state` at startup; a second instance on the same session refuses to start.

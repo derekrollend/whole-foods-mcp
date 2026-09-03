@@ -49,10 +49,28 @@ Each tool has a clear, single responsibility:
 | `save_session` | Browser state | `.browser_state/state.json` | Persists cookies, switches to headless |
 | `search_whole_foods` | Search results | — | Find products (read-only, no side effects) |
 | `get_product_details` | Product page | Screenshot file | Deep dive: text details + product image |
-| `add_to_cart` | Product page | Cart | Adds item by ASIN (fetches fresh ATC token) |
+| `add_to_cart` | Product page | Cart | Adds item by ASIN (fetches fresh ATC token); returns the real cart-row ASIN |
+| `add_many` | Product pages | Cart | Adds a list of `{asin, quantity}` sequentially on one page — no cart race |
 | `view_cart` | Cart page | — | Read current cart contents |
 | `remove_from_cart` | Cart page | Cart | Remove specific item by ASIN |
+| `remove_many` | Cart page | Cart | Remove a list of ASINs, reloading between each |
 | `clear_cart` | Cart page | Cart | Clear entire cart |
+| `ping` | Cookies | — | Fast `{ok, logged_in}` health check, no navigation |
+
+**Fork additions** (`derekrollend/whole-foods-mcp`, for Recipe Relay):
+
+- `add_many` / `remove_many` — batch cart mutation on a single page. Concurrent
+  `add_to_cart` calls race the one Amazon cart and spuriously 400; a sequential
+  batch does not. Programmatic callers should prefer these.
+- `add_to_cart` / `add_many` return `asin` = the ASIN that actually landed in
+  the cart (variant products differ from the requested ASIN), plus
+  `requested_asin`. `_debug` carries the raw ATC payload + POST response during
+  bring-up.
+- `ping` — liveness without a page load, for callers polling connection status.
+- `_is_logged_in()` falls back to the `at-main` auth cookie when the DOM is
+  inconclusive instead of assuming success.
+- Startup takes an exclusive `flock` on `.browser_state/server.lock`; a second
+  instance on the same login exits 1 with a message.
 
 **Key design decisions:**
 
