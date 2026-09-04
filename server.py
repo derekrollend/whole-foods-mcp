@@ -466,6 +466,75 @@ async def remove_many(asins: list[str]) -> str:
     return json.dumps(out, indent=2)
 
 
+_READ_STEPPER_QTY_JS = """(asin) => {
+    const row = document.querySelector(`[data-asin="${asin}"]`);
+    if (!row) return null;
+    const btn = row.querySelector('button[id^="qs-widget-button-"][id$="-announce"]');
+    if (!btn) return null;
+    const n = parseInt((btn.textContent || '').trim(), 10);
+    return Number.isFinite(n) ? n : null;
+}"""
+
+
+async def _read_stepper_qty(page: Page, asin: str) -> int | None:
+    return await page.evaluate(_READ_STEPPER_QTY_JS, asin)
+
+
+@mcp.tool()
+async def set_cart_quantity(asin: str, quantity: int) -> str:
+    """Set the exact quantity of an item already in the cart.
+
+    Drives the cart's own quantity stepper (+/- buttons) with real clicks,
+    rather than removing and re-adding the line — so a failed step never
+    leaves the line missing, only at an in-between quantity.
+
+    Args:
+        asin: ASIN of the cart line to change (from view_cart).
+        quantity: the exact quantity to set (>= 1; this tool never removes the
+            line — decrementing to 0 would, so it stops at 1).
+    """
+    quantity = max(1, int(quantity))
+    page = await _get_main_page()
+    await _goto_cart(page)
+
+    current = await _read_stepper_qty(page, asin)
+    if current is None:
+        return json.dumps({
+            "success": False, "asin": asin,
+            "reason": "Quantity stepper not found for this item — is it in the cart?",
+        })
+    if current == quantity:
+        return json.dumps({"success": True, "asin": asin, "quantity": quantity})
+
+    increasing = quantity > current
+    steps = abs(quantity - current)
+    if steps > 20:
+        return json.dumps({
+            "success": False, "asin": asin, "quantity": current,
+            "reason": f"Refusing to click the stepper {steps} times — too large a jump",
+        })
+    wrapper = "increment" if increasing else "decrement"
+    selector = f'[data-asin="{asin}"] .qs-widget-{wrapper}-button-flex-wrapper input.a-button-input'
+
+    for _ in range(steps):
+        # Re-query every click: the widget re-renders after each step.
+        btn = await page.query_selector(selector)
+        if not btn:
+            break
+        await btn.click()
+        await asyncio.sleep(0.6)
+
+    await asyncio.sleep(0.4)
+    final = await _read_stepper_qty(page, asin)
+    await _save_state()
+    if final == quantity:
+        return json.dumps({"success": True, "asin": asin, "quantity": final})
+    return json.dumps({
+        "success": False, "asin": asin, "quantity": final,
+        "reason": f"Expected quantity {quantity}, stepper now shows {final}",
+    })
+
+
 @mcp.tool()
 async def clear_cart() -> str:
     """Remove all items from the Whole Foods cart using the bulk 'Clear entire cart' button."""
