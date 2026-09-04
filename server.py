@@ -112,7 +112,10 @@ async def _new_wf_page() -> Page:
     ctx = await _ensure_context()
     page = await ctx.new_page()
     await page.goto(WF_HOME, wait_until="domcontentloaded")
-    await asyncio.sleep(1)
+    try:
+        await page.wait_for_selector("#nav-link-accountList-nav-line-1", timeout=5000)
+    except Exception:  # noqa: BLE001 — _is_logged_in falls back to the auth cookie
+        pass
     if not await _is_logged_in(page):
         await page.close()
         raise RuntimeError(
@@ -385,15 +388,8 @@ async def ping() -> str:
 async def view_cart() -> str:
     """Navigate to the Whole Foods cart and return a summary of items."""
     page = await _get_main_page()
-    await page.goto(WF_CART_URL, wait_until="domcontentloaded")
-    await asyncio.sleep(2)
-    if not await _is_logged_in(page):
-        raise RuntimeError(
-            "Session expired or not logged in. Call login() then save_session() before retrying."
-        )
-
+    await _goto_cart(page)
     cart_info = await page.evaluate(_load_js("view_cart.js"))
-
     return json.dumps(cart_info, indent=2)
 
 
@@ -411,9 +407,10 @@ async def _remove_one(page: Page, asin: str) -> dict:
         return {"removed": False, "asin": asin, "error": "Item not found in cart or no delete button"}
 
     await delete_btn.click()
-    await asyncio.sleep(2)
-    await page.wait_for_load_state("domcontentloaded")
-    await asyncio.sleep(1)
+    try:
+        await page.wait_for_selector(f'[data-asin="{asin}"]', state="detached", timeout=8000)
+    except Exception:  # noqa: BLE001 — timed out still present; the check below reports it
+        pass
 
     if await page.query_selector(f'[data-asin="{asin}"]'):
         return {"removed": False, "asin": asin, "error": "Delete clicked but item still in cart"}
@@ -423,7 +420,16 @@ async def _remove_one(page: Page, asin: str) -> dict:
 async def _goto_cart(page: Page) -> None:
     """Load the cart page fresh and assert the session is still authenticated."""
     await page.goto(WF_CART_URL, wait_until="domcontentloaded")
-    await asyncio.sleep(2)
+    # #localmarket-full-cart is the cart's own content wrapper — present whether
+    # the cart is empty or full, unlike the recommendation carousels around it.
+    try:
+        await page.wait_for_selector("#localmarket-full-cart", timeout=8000)
+    except Exception:  # noqa: BLE001 — proceed with whatever's rendered so far
+        pass
+    try:
+        await page.wait_for_selector(".sc-fresh-cart-spinner", state="hidden", timeout=3000)
+    except Exception:  # noqa: BLE001 — best-effort; not every cart state shows it
+        pass
     if not await _is_logged_in(page):
         raise RuntimeError(
             "Session expired or not logged in. Call login() then save_session() before retrying."
@@ -475,6 +481,17 @@ _READ_STEPPER_QTY_JS = """(asin) => {
     return Number.isFinite(n) ? n : null;
 }"""
 
+# Polling predicate for wait_for_function — true once the stepper's displayed
+# quantity reaches the value a click was expected to produce.
+_STEPPER_QTY_IS_JS = """({asin, expected}) => {
+    const row = document.querySelector(`[data-asin="${asin}"]`);
+    if (!row) return false;
+    const btn = row.querySelector('button[id^="qs-widget-button-"][id$="-announce"]');
+    if (!btn) return false;
+    const n = parseInt((btn.textContent || '').trim(), 10);
+    return n === expected;
+}"""
+
 
 async def _read_stepper_qty(page: Page, asin: str) -> int | None:
     return await page.evaluate(_READ_STEPPER_QTY_JS, asin)
@@ -515,16 +532,23 @@ async def set_cart_quantity(asin: str, quantity: int) -> str:
         })
     wrapper = "increment" if increasing else "decrement"
     selector = f'[data-asin="{asin}"] .qs-widget-{wrapper}-button-flex-wrapper input.a-button-input'
+    step = 1 if increasing else -1
 
+    expected = current
     for _ in range(steps):
         # Re-query every click: the widget re-renders after each step.
         btn = await page.query_selector(selector)
         if not btn:
             break
         await btn.click()
-        await asyncio.sleep(0.6)
+        expected += step
+        try:
+            await page.wait_for_function(
+                _STEPPER_QTY_IS_JS, arg={"asin": asin, "expected": expected}, timeout=3000,
+            )
+        except Exception:  # noqa: BLE001 — the final read-back below is the real check
+            pass
 
-    await asyncio.sleep(0.4)
     final = await _read_stepper_qty(page, asin)
     await _save_state()
     if final == quantity:
@@ -535,16 +559,24 @@ async def set_cart_quantity(asin: str, quantity: int) -> str:
     })
 
 
+_HAS_CLEAR_BUTTON_JS = """() => {
+    for (const el of document.querySelectorAll('a, span, input, button')) {
+        const text = (el.textContent || '').trim().toLowerCase();
+        if (text === 'clear cart' || text.includes('clear entire cart') || text.includes('clear all items')) {
+            return true;
+        }
+    }
+    return !!document.querySelector('a[href*="clearCart"], a[href*="clear-cart"]');
+}"""
+
+_CONFIRM_DIALOG_SELECTOR = '.a-popover:not([style*="display: none"]), .a-modal, [role="dialog"]'
+
+
 @mcp.tool()
 async def clear_cart() -> str:
     """Remove all items from the Whole Foods cart using the bulk 'Clear entire cart' button."""
     page = await _get_main_page()
-    await page.goto(WF_CART_URL, wait_until="domcontentloaded")
-    await asyncio.sleep(2)
-    if not await _is_logged_in(page):
-        raise RuntimeError(
-            "Session expired or not logged in. Call login() then save_session() before retrying."
-        )
+    await _goto_cart(page)
 
     # Check if cart has items
     item_count = await page.evaluate("() => document.querySelectorAll('[data-asin]').length")
@@ -553,19 +585,30 @@ async def clear_cart() -> str:
 
     # Step 1: Click "Clear entire cart" via JS to avoid pointer interception
     await page.evaluate(_load_js("clear_cart_click.js"))
-    await asyncio.sleep(1)
+    try:
+        await page.wait_for_function(_HAS_CLEAR_BUTTON_JS, timeout=5000)
+    except Exception:  # noqa: BLE001 — the click attempt below reports if it's really missing
+        pass
 
     click_result = await page.evaluate(_load_js("clear_cart_find_button.js"))
 
     if not click_result.get("clicked"):
         return json.dumps({"success": False, "reason": "Could not find clear cart button"})
 
-    # Step 2: Wait for confirmation dialog and click "Clear"
-    await asyncio.sleep(2)
+    # Step 2: Wait for the confirmation dialog, then click "Clear"
+    try:
+        await page.wait_for_selector(_CONFIRM_DIALOG_SELECTOR, timeout=5000)
+    except Exception:  # noqa: BLE001 — clear_cart_confirm.js reports if it never shows up
+        pass
 
     confirm_result = await page.evaluate(_load_js("clear_cart_confirm.js"))
 
-    await asyncio.sleep(2)
+    try:
+        await page.wait_for_function(
+            "() => document.querySelectorAll('[data-asin]').length === 0", timeout=8000
+        )
+    except Exception:  # noqa: BLE001 — the reported outcome below reflects what actually happened
+        pass
     await _save_state()
 
     if confirm_result.get("confirmed"):
@@ -591,7 +634,15 @@ async def get_product_details(asin: str) -> str:
     try:
         url = f"https://www.amazon.com/dp/{asin}?almBrandId={WF_BRAND_ID}&fpw=alm&s=wholefoods"
         await page.goto(url, wait_until="domcontentloaded")
-        await asyncio.sleep(2)
+        # PRODUCT_DETAILS_JS does its own fetch() independent of what's
+        # rendered — this wait is only so the screenshot below shows the
+        # loaded product image rather than a blank/placeholder page.
+        try:
+            await page.wait_for_selector(
+                "#landingImage, #imgTagWrapperId img, #main-image-container img", timeout=5000
+            )
+        except Exception:  # noqa: BLE001 — screenshot whatever rendered in time
+            pass
 
         details = await page.evaluate(PRODUCT_DETAILS_JS, asin)
 

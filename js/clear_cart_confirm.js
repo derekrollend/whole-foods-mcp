@@ -12,7 +12,6 @@ async () => {
                 text === 'Yes' || val === 'Yes' ||
                 text === 'Confirm' || val === 'Confirm') {
                 el.click();
-                await new Promise(r => setTimeout(r, 3000));
                 return { confirmed: true, buttonText: text || val };
             }
         }
@@ -24,7 +23,6 @@ async () => {
         const val = el.getAttribute('value') || '';
         if (text === 'Clear' || val === 'Clear') {
             el.click();
-            await new Promise(r => setTimeout(r, 3000));
             return { confirmed: true, buttonText: text || val, fallback: true };
         }
     }
