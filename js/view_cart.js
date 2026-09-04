@@ -78,9 +78,17 @@
         items.push({ asin, title: title.substring(0, 80), quantity: qty, price });
     }
 
+    // Pull just the dollar amount out of whichever candidate matches — some of
+    // these selectors (the '.sc-subtotal' fallback especially) can pick up a
+    // much bigger sidebar block full of unrelated text/whitespace.
     let subtotal = '';
-    const subtotalEl = document.querySelector('#sc-subtotal-amount-activecart .a-price .a-offscreen, .sc-subtotal');
-    if (subtotalEl) subtotal = subtotalEl.textContent.trim();
+    const subtotalCandidates = document.querySelectorAll(
+        '#sc-subtotal-amount-activecart .a-price .a-offscreen, #sc-subtotal-amount-activecart, .sc-subtotal'
+    );
+    for (const el of subtotalCandidates) {
+        const m = (el.textContent || '').match(/\$[\d,]+\.\d{2}/);
+        if (m) { subtotal = m[0]; break; }
+    }
 
     return { items, subtotal };
 }
