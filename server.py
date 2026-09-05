@@ -27,6 +27,20 @@ WF_BRAND_ID = "VUZHIFdob2xlIEZvb2Rz"
 WF_CART_URL = f"https://www.amazon.com/cart/localmarket?almBrandId={WF_BRAND_ID}"
 WF_HOME = "https://www.amazon.com/?i=wholefoods"
 
+# search_whole_foods / add_to_cart / add_many run entirely through fetch() from
+# a page parked on an amazon.com origin — they never touch the host page's DOM
+# or styling. Aborting these resource types turns a full homepage render into a
+# bare HTML fetch, cutting most of each call's wall time. (get_product_details
+# needs the real image for its screenshot, so it opts out.)
+_HEAVY_ASSET_TYPES = {"image", "media", "font", "stylesheet"}
+
+
+async def _route_block_assets(route) -> None:
+    if route.request.resource_type in _HEAVY_ASSET_TYPES:
+        await route.abort()
+    else:
+        await route.continue_()
+
 # ---------------------------------------------------------------------------
 # Browser management
 # ---------------------------------------------------------------------------
@@ -107,20 +121,35 @@ async def _is_logged_in(page: Page) -> bool:
     return await _has_auth_cookie(page.context)
 
 
-async def _new_wf_page() -> Page:
-    """Create a fresh page on a Whole Foods URL. Caller must close it when done."""
+async def _new_wf_page(block_assets: bool = True) -> Page:
+    """Create a fresh page on a Whole Foods URL. Caller must close it when done.
+
+    `block_assets` aborts images/fonts/CSS and uses a bare `commit` wait — right
+    for the fetch()-only tools (search / add), which don't render anything.
+    `get_product_details` passes False (it screenshots the page).
+    """
     ctx = await _ensure_context()
     page = await ctx.new_page()
-    await page.goto(WF_HOME, wait_until="domcontentloaded")
-    try:
-        await page.wait_for_selector("#nav-link-accountList-nav-line-1", timeout=5000)
-    except Exception:  # noqa: BLE001 — _is_logged_in falls back to the auth cookie
-        pass
-    if not await _is_logged_in(page):
-        await page.close()
-        raise RuntimeError(
-            "Session expired or not logged in. Call login() then save_session() before retrying."
-        )
+    if block_assets:
+        await page.route("**/*", _route_block_assets)
+        await page.goto(WF_HOME, wait_until="commit")
+    else:
+        await page.goto(WF_HOME, wait_until="domcontentloaded")
+
+    # Fast path: the auth cookie is on the shared context — trust it (this is
+    # what ping() uses) rather than waiting for an asset-stripped page to paint
+    # its account-nav element. Only fall back to the DOM check when the cookie
+    # is missing.
+    if not await _has_auth_cookie(ctx):
+        try:
+            await page.wait_for_selector("#nav-link-accountList-nav-line-1", timeout=5000)
+        except Exception:  # noqa: BLE001 — _is_logged_in falls back to the auth cookie
+            pass
+        if not await _is_logged_in(page):
+            await page.close()
+            raise RuntimeError(
+                "Session expired or not logged in. Call login() then save_session() before retrying."
+            )
     return page
 
 
@@ -630,7 +659,7 @@ async def get_product_details(asin: str) -> str:
     Args:
         asin: The Amazon ASIN of the product (from search_whole_foods results).
     """
-    page = await _new_wf_page()
+    page = await _new_wf_page(block_assets=False)
     try:
         url = f"https://www.amazon.com/dp/{asin}?almBrandId={WF_BRAND_ID}&fpw=alm&s=wholefoods"
         await page.goto(url, wait_until="domcontentloaded")

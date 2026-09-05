@@ -5,9 +5,11 @@
 > maintained for [Recipe Relay](https://github.com/derekrollend/recipe-relay).
 > It adds batch cart tools (`add_many` / `remove_many`), a fast `ping` health
 > check, a real cart-ASIN in `add_to_cart`'s response, conservative login
-> detection, and a single-instance lock on `.browser_state`. `upstream` tracks
-> the original. See `docs/whole-foods-mcp-wishlist.md` in the Recipe Relay repo
-> for the rationale.
+> detection, a single-instance lock on `.browser_state`, and a
+> fetch-only fast path for `search_whole_foods` / `add_to_cart` / `add_many`
+> (they abort images/CSS/fonts and skip the homepage render — ~7× faster per
+> call). `upstream` tracks the original. See
+> `docs/whole-foods-mcp-wishlist.md` in the Recipe Relay repo for the rationale.
 
 An [MCP](https://modelcontextprotocol.io) server that automates grocery ordering from Amazon Whole Foods Market. Uses [Playwright](https://playwright.dev/python/) for browser automation and exposes tools for searching products, managing your cart, and adding items.
 
